@@ -73,6 +73,8 @@ final class BandManager: NSObject, ObservableObject {
     private var announcedMusicApp: String?
     private var lastMusicIdentity: String?
     private var lastPlayback: BandMedia.Playback?
+    /// Saúde e clima a cada 30 min enquanto o app estiver ativo.
+    private var periodic: Timer?
 
     private var savedId: UUID? {
         get { defaults.string(forKey: "band.id").flatMap(UUID.init(uuidString:)) }
@@ -90,6 +92,9 @@ final class BandManager: NSObject, ObservableObject {
         super.init()
         bandName = defaults.string(forKey: "band.name")
         MusicBridge.shared.onChange = { [weak self] in self?.syncMusic() }
+        HealthSync.shared.send = { [weak self] agent, message in
+            self?.send(agent, message, queueIfOffline: false)
+        }
         _ = central
     }
 
@@ -277,6 +282,9 @@ final class BandManager: NSObject, ObservableObject {
         announcedMusicApp = nil
         lastMusicIdentity = nil
         lastPlayback = nil
+        periodic?.invalidate()
+        periodic = nil
+        HealthSync.shared.reset()
     }
 
     private func after(_ seconds: Double, _ body: @escaping () -> Void) {
@@ -371,9 +379,28 @@ final class BandManager: NSObject, ObservableObject {
         send(.call, BandCall.enableNotification())
         send(.fullSettings, BandSettings.batteryRequest)
         syncMusic()
+        HealthSync.shared.connected()
+        after(1) { [weak self] in self?.sendWeather(force: false) }
+        periodic = Timer.scheduledTimer(withTimeInterval: 30 * 60, repeats: true) { [weak self] _ in
+            guard let self, self.isReady else { return }
+            HealthSync.shared.requestSync()
+            self.sendWeather(force: false)
+        }
         let queued = pending
         pending = []
         for (agent, message) in queued { send(agent, message) }
+    }
+
+    // MARK: - Clima (serviço 5)
+
+    /// Envia a previsão (do cache se tiver menos de 30 min, ou busca uma nova).
+    func sendWeather(force: Bool) {
+        let weather = WeatherService.shared
+        guard weather.enabled else { return }
+        Task { @MainActor [weak self] in
+            guard let forecast = await weather.current(maxAge: force ? 0 : 30 * 60) else { return }
+            self?.send(.weather, BandWeather.response(forecast), queueIfOffline: false)
+        }
     }
 
     private func handleMessage(service: Int, _ m: [UInt8]) {
@@ -396,6 +423,10 @@ final class BandManager: NSObject, ObservableObject {
             if let action = BandCall.parseBandAction(m) { handleCallAction(action) }
         case .media?:
             handleMedia(m)
+        case .health?:
+            HealthSync.shared.handle(m)
+        case .weather?:
+            if let kind = BandWeather.requestKind(m) { sendWeather(force: kind == 1) }
         default:
             break
         }

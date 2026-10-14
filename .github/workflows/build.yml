@@ -59,11 +59,25 @@ jobs:
           zip -qry Fit3Link.ipa Payload
           ls -la Fit3Link.ipa
 
+      # Variante com Apple Saúde: assinatura ad-hoc carregando o entitlement do HealthKit, que o
+      # Sideloadly lê ao reassinar (um .ipa sem assinatura nunca recebe o HealthKit).
+      - name: Empacotar IPA com Apple Saúde
+        run: |
+          mkdir -p saude
+          cp -R Payload saude/
+          codesign --force --sign - --generate-entitlement-der \
+            --entitlements ios/Fit3Link-Saude.entitlements saude/Payload/Fit3Link.app
+          codesign -d --entitlements - saude/Payload/Fit3Link.app 2>/dev/null | grep -q healthkit
+          (cd saude && zip -qry ../Fit3Link-Saude.ipa Payload)
+          ls -la Fit3Link-Saude.ipa
+
       - name: Enviar artefato
         uses: actions/upload-artifact@v4
         with:
           name: Fit3Link-ipa
-          path: Fit3Link.ipa
+          path: |
+            Fit3Link.ipa
+            Fit3Link-Saude.ipa
 
       - name: Publicar release "latest"
         if: github.event_name != 'pull_request'
@@ -71,9 +85,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest Fit3Link.ipa \
+          gh release create latest Fit3Link.ipa Fit3Link-Saude.ipa \
             --title "Build mais recente" \
-            --notes "Compilado de ${GITHUB_SHA::7} em $(date -u '+%Y-%m-%d %H:%M UTC'). Instale com Sideloadly ou SideStore." \
+            --notes "Compilado de ${GITHUB_SHA::7} em $(date -u '+%Y-%m-%d %H:%M UTC'). Fit3Link-Saude.ipa inclui o Apple Saúde; se o Sideloadly recusar, use o Fit3Link.ipa. Veja docs/INSTALACAO.md." \
             --prerelease
 
       - name: Log de build em caso de falha

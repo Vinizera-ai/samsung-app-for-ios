@@ -36,6 +36,9 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSBluetoothAlwaysUsageDescription: O Fit3 Link usa o Bluetooth para conectar à sua Galaxy Fit3 e enviar notificações e chamadas.
         NSAppleMusicUsageDescription: O Fit3 Link usa o Apple Music para mostrar a música atual na pulseira e controlar a reprodução pelos botões dela.
+        NSHealthUpdateUsageDescription: O Fit3 Link grava no Apple Saúde os passos, batimentos, oxigênio e sono medidos pela sua Galaxy Fit3.
+        NSHealthShareUsageDescription: O Fit3 Link não lê dados do Apple Saúde; esta permissão só acompanha a gravação.
+        NSLocationWhenInUseUsageDescription: O Fit3 Link usa sua localização aproximada para mostrar o clima da sua cidade na pulseira.
         # bluetooth-central: reconexão e restauração em segundo plano.
         # audio: só para o modo opcional "Manter ativo em segundo plano" (alertas de chamada).
         UIBackgroundModes: [bluetooth-central, audio]

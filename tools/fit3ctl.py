@@ -9,6 +9,8 @@ Exemplos:
   python fit3ctl.py notify AA:BB:CC:DD:EE:FF --title "Olá" --body "Teste do PC"
   python fit3ctl.py call AA:BB:CC:DD:EE:FF --name "Maria" --number "+55 11 99999-0000"
   python fit3ctl.py music AA:BB:CC:DD:EE:FF --title "Minha música" --artist "Artista"
+  python fit3ctl.py health AA:BB:CC:DD:EE:FF
+  python fit3ctl.py weather AA:BB:CC:DD:EE:FF --city "Campinas"
   python fit3ctl.py sniff AA:BB:CC:DD:EE:FF --seconds 120 --log captura.txt
 """
 from __future__ import annotations
@@ -19,6 +21,7 @@ import locale
 import re
 import sys
 import time
+from datetime import datetime
 from typing import Callable
 
 try:
@@ -26,7 +29,9 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("Instale as dependências: pip install -r requirements.txt")
 
+from fit3 import health as H
 from fit3 import sap
+from fit3 import weather as W
 from fit3.messages import (Call, Media, Notification, Oobe, Settings, band_locale_id,
                            find_firmware, parse_header)
 
@@ -47,7 +52,20 @@ class Fit3Session:
         self._waiters: list[tuple[Callable[[int, bytes], bool], asyncio.Future]] = []
         self._log = open(log_path, "a", encoding="utf-8") if log_path else None
         self._send_lock = asyncio.Lock()  # quadros de mensagens diferentes não podem se misturar
-        self.on_message: Callable[[int, bytes], None] | None = None
+        self._on_message: Callable[[int, bytes], None] | None = None
+        self._backlog: list[tuple[int, bytes]] = []  # mensagens que chegaram antes de um handler
+
+    @property
+    def on_message(self) -> Callable[[int, bytes], None] | None:
+        return self._on_message
+
+    @on_message.setter
+    def on_message(self, handler: Callable[[int, bytes], None] | None) -> None:
+        self._on_message = handler
+        backlog, self._backlog = self._backlog, []
+        if handler:
+            for service, message in backlog:
+                handler(service, message)
 
     # --- log ---
 
@@ -118,8 +136,10 @@ class Fit3Session:
                 fut.set_result(payload)
                 self._waiters.remove((pred, fut))
                 return
-        if self.on_message:
-            self.on_message(service, payload)
+        if self._on_message:
+            self._on_message(service, payload)
+        elif len(self._backlog) < 100:
+            self._backlog.append((service, payload))
 
     async def _answer_capability(self, request: bytes) -> None:
         await self._write_raw(sap.capability_response(request))
@@ -334,6 +354,91 @@ async def cmd_music(args) -> None:
     await with_session(args, run)
 
 
+async def cmd_health(args) -> None:
+    """Faz o papel do Samsung Health: handshake, pede os dados e mostra o que a pulseira enviar."""
+    async def run(s: Fit3Session):
+        loop = asyncio.get_running_loop()
+        large = H.LargeDataReceiver()
+        state = {"seq": 10000, "capability": False, "probed": False, "bins": {}, "vitals": [], "stages": []}
+
+        def next_seq() -> int:
+            state["seq"] = 1 if state["seq"] >= 0xFFFF else state["seq"] + 1
+            return state["seq"]
+
+        async def handle(m: bytes) -> None:
+            chunk = large.accept(m)
+            if chunk is not None:
+                payload, ack = chunk
+                if ack:
+                    await s.send(Agent.HEALTH, ack)
+                if payload is None:
+                    return
+                m = payload
+            event, reply = H.reply_for(m)
+            for b in H.parse_step_bins(m) or []:
+                state["bins"][b.start] = b
+            state["vitals"] += H.parse_vitals(m) or []
+            state["stages"] += H.parse_sleep_stages(m) or []
+            print(f">>> saúde: {event}")
+            if reply:
+                await s.send(Agent.HEALTH, reply)
+            if event == "gm_capability" and not state["probed"]:
+                state["probed"] = True
+                await asyncio.sleep(0.65)
+                await s.send(Agent.HEALTH, H.MOBILE_CAPABILITY_REQUEST)
+            elif event == "wearable_capability":
+                state["capability"] = True
+                await asyncio.sleep(0.25)
+                await s.send(Agent.HEALTH, H.request_data(next_seq(), int(time.time() * 1000)))
+
+        s.on_message = lambda sv, m: sv == Agent.HEALTH and loop.create_task(handle(m))
+        print(f"Sincronizando saúde por {args.seconds:.0f}s…")
+        await asyncio.sleep(3)
+        if not state["probed"]:  # a pulseira não iniciou a sessão sozinha: pede a capacidade
+            state["probed"] = True
+            await s.send(Agent.HEALTH, H.MOBILE_CAPABILITY_REQUEST)
+        await asyncio.sleep(max(0, args.seconds - 3))
+
+        bins = sorted(state["bins"].values(), key=lambda b: b.start)
+        tz = datetime.now().astimezone().tzinfo
+        today = datetime.now(tz).date()
+        print()
+        print(f"Passos hoje: {H.steps_for_day(bins, today, tz)} ({len(bins)} intervalos de 1 min recebidos)")
+        names = {H.DATA_HEART_RATE: "Batimentos (bpm)", H.DATA_SPO2: "Oxigênio (%)", H.DATA_STRESS: "Estresse"}
+        for kind, name in names.items():
+            samples = [v for v in state["vitals"] if v.type == kind and v.value is not None and v.measured_at]
+            if samples:
+                last = max(samples, key=lambda v: v.measured_at)
+                when = datetime.fromtimestamp(last.measured_at / 1000, tz).strftime("%d/%m %H:%M")
+                print(f"{name}: {last.value} em {when} ({len(samples)} medições)")
+        for ep in (v for v in state["vitals"] if v.type == H.DATA_SLEEP and v.start and v.end):
+            fmt = lambda ms: datetime.fromtimestamp(ms / 1000, tz).strftime("%d/%m %H:%M")  # noqa: E731
+            print(f"Sono: {fmt(ep.start)} → {fmt(ep.end)} ({(ep.end - ep.start) // 60000} min, nota {ep.score})")
+        if state["stages"]:
+            print(f"Estágios de sono: {len(state['stages'])}")
+    await with_session(args, run)
+
+
+async def cmd_weather(args) -> None:
+    """Busca a previsão no Open-Meteo e envia; também responde quando a pulseira pedir."""
+    place = W.geocode(args.city)
+    if not place:
+        sys.exit(f"Cidade não encontrada: {args.city}")
+    fc = W.fetch(place["latitude"], place["longitude"], place["name"],
+                 place.get("admin1", ""), place.get("country", ""))
+    print(f"{fc.city}: {fc.temperature:.0f}°C, máx {fc.high:.0f} / mín {fc.low:.0f}, umidade {fc.humidity}%")
+    packet = W.response(fc)
+
+    async def run(s: Fit3Session):
+        loop = asyncio.get_running_loop()
+        s.on_message = lambda sv, m: (sv == Agent.WEATHER and W.request_kind(m) is not None
+                                      and loop.create_task(s.send(Agent.WEATHER, packet)))
+        await s.send(Agent.WEATHER, packet)
+        print(f"Clima enviado. Abra o clima na pulseira ({args.seconds:.0f}s)…")
+        await asyncio.sleep(args.seconds)
+    await with_session(args, run)
+
+
 async def cmd_sniff(args) -> None:
     async def run(s: Fit3Session):
         print(f"Registrando tudo que a pulseira enviar por {args.seconds}s (mexa na pulseira)…")
@@ -394,6 +499,11 @@ def main() -> None:
     mu.add_argument("--title", default="Música de teste")
     mu.add_argument("--artist", default="Fit3 Link")
     mu.add_argument("--seconds", type=float, default=120)
+    he = connected("health", "sincroniza passos, batimentos, sono e oxigênio", cmd_health)
+    he.add_argument("--seconds", type=float, default=45)
+    we = connected("weather", "envia o clima de uma cidade (Open-Meteo)", cmd_weather)
+    we.add_argument("--city", default="São Paulo")
+    we.add_argument("--seconds", type=float, default=30)
     sn = connected("sniff", "registra mensagens da pulseira", cmd_sniff)
     sn.add_argument("--seconds", type=float, default=60)
     r = connected("raw", "envia uma mensagem SAP crua", cmd_raw)

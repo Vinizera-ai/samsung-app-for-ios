@@ -11,6 +11,11 @@ struct ContentView: View {
     @State private var keepAlive = KeepAlive.shared.enabled
     @AppStorage("music.enabled") private var musicEnabled = true
     @State private var musicAuthorized = MusicBridge.shared.authorized
+    @ObservedObject private var health = HealthSync.shared
+    @ObservedObject private var weather = WeatherService.shared
+    @AppStorage("health.appleHealth") private var appleHealth = false
+    @AppStorage("weather.enabled") private var weatherEnabled = true
+    @AppStorage("weather.city") private var weatherCity = ""
 
     var body: some View {
         NavigationStack {
@@ -24,6 +29,9 @@ struct ContentView: View {
                         Text("Se a pulseira estava pareada com um Android, desligue o Bluetooth dele ou redefina a pulseira (Configurações › Geral › Redefinir).")
                     }
                 }
+
+                healthSection
+                weatherSection
 
                 Section("Testes") {
                     Button("Enviar notificação de teste") {
@@ -92,6 +100,98 @@ struct ContentView: View {
             .sheet(isPresented: $showScanner) {
                 ScannerView().environmentObject(band)
             }
+            .onAppear {
+                if weatherEnabled && weatherCity.trimmingCharacters(in: .whitespaces).isEmpty {
+                    WeatherService.shared.requestLocationPermission()
+                }
+            }
+        }
+    }
+
+    private var healthSection: some View {
+        Section {
+            LabeledContent("Passos", value: "\(health.today.steps)")
+            LabeledContent("Distância", value: String(format: "%.2f km", health.today.distanceMeters / 1000))
+            LabeledContent("Calorias ativas", value: "\(Int(health.today.calories)) kcal")
+            if let hr = health.today.heartRate {
+                LabeledContent("Batimentos", value: "\(hr.value) bpm às \(hr.end.formatted(date: .omitted, time: .shortened))")
+            }
+            if let o2 = health.today.spo2 {
+                LabeledContent("Oxigênio no sangue", value: "\(o2.value)%")
+            }
+            if let stress = health.today.stress {
+                LabeledContent("Estresse", value: "\(stress.value)")
+            }
+            if let minutes = health.today.sleepMinutes {
+                LabeledContent("Sono", value: sleepText(minutes: minutes, score: health.today.sleepScore))
+            }
+            Button("Sincronizar agora") { HealthSync.shared.requestSync() }
+                .disabled(!band.isReady)
+            Toggle("Enviar ao Apple Saúde", isOn: Binding(
+                get: { appleHealth },
+                set: { on in
+                    appleHealth = on
+                    if on { HealthSync.shared.enableAppleHealth() }
+                }))
+            if appleHealth, let status = health.appleHealthStatus {
+                Text(status).font(.caption).foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Saúde hoje")
+        } footer: {
+            Text(healthFooter)
+        }
+    }
+
+    private func sleepText(minutes: Int, score: Int?) -> String {
+        var text = "\(minutes / 60) h \(minutes % 60) min"
+        if let score { text += " · nota \(score)" }
+        return text
+    }
+
+    private var healthFooter: String {
+        var text = ""
+        if let last = health.lastSync {
+            text = "Última sincronização: \(last.formatted(date: .abbreviated, time: .shortened)). "
+        }
+        return text + "A pulseira manda os dados sozinha de tempos em tempos; o histórico dos últimos 30 dias fica no app."
+    }
+
+    private func weatherSummary(_ fc: BandWeather.Forecast) -> String {
+        let now = Int(fc.temperature.rounded()), high = Int(fc.high.rounded()), low = Int(fc.low.rounded())
+        return "\(fc.city): \(now)°C, máx. \(high)° / mín. \(low)° · \(fc.updatedAt.formatted(date: .omitted, time: .shortened))"
+    }
+
+    private var weatherSection: some View {
+        Section {
+            Toggle("Clima na pulseira", isOn: Binding(
+                get: { weatherEnabled },
+                set: { on in
+                    weatherEnabled = on
+                    if on {
+                        WeatherService.shared.requestLocationPermission()
+                        band.sendWeather(force: true)
+                    }
+                }))
+            if weatherEnabled {
+                TextField("Cidade (vazio = sua localização)", text: $weatherCity)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .onSubmit { band.sendWeather(force: true) }
+                Button("Atualizar clima agora") { band.sendWeather(force: true) }
+                    .disabled(!band.isReady)
+                if let fc = weather.forecast {
+                    Text(weatherSummary(fc))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if let status = weather.status {
+                    Text(status).font(.caption).foregroundStyle(.red)
+                }
+            }
+        } header: {
+            Text("Clima")
+        } footer: {
+            Text("Dados do Open-Meteo, atualizados a cada 30 minutos e quando você abre o clima na pulseira.")
         }
     }
 
