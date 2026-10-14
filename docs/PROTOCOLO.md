@@ -186,10 +186,63 @@ Celular → pulseira (respostas). As "fixas" do agente 9 levam o número de par�
 
 A capa do álbum e a fila são transferidas como arquivos por Bluetooth Classic → indisponíveis no iOS.
 
+## Saúde (serviço 10) 🧪
+
+Recuperado do plugin oficial (`HealthDataManager`, `ModenConstant`, `ConsolidatedSyncDataParser`)
+pelo Fit3-App e testado em pulseiras AZA3. O celular se apresenta como **Samsung Health 7.0.6**.
+
+| Passo | Mensagem |
+|---|---|
+| 1. Pulseira pede capacidade GM | `A2 02  E0 <seq LE>  E1 <proto LE>` |
+| 2. Celular responde | `E2 06  D0 02  D1 00  D2 <7006011 LE32>  D3 <6040000 LE32>  E0 <seq>  E1 <proto>` |
+| 3. Celular pede capacidade do host (650 ms depois) | `34` |
+| 4. Pulseira pergunta a versão | `A0 …  E0 <seq LE> …` |
+| 5. Celular responde | `E0 …` com protocolo 4.51 e 10 strings JSON (> 500 bytes, fragmentado) |
+| 6. Celular pede os dados | `03 E0 <seq LE> 05 19 01 00 02 00 00 03 04 33  04 <0>  05 <0>  06 <agora desde 1990, LE32>  07 01` (31 bytes) |
+| 7. Pulseira envia lotes | `82 03 E0 <seq LE> <tipo> …` |
+| 8. Celular confirma **cada lote** | `42 02 E0 <seq do lote> 04 02 01 01` |
+
+Outros: a pulseira pede dados ao celular (`03 E0 <seq>…`) → `43 E0 <seq> 04 02 01 01`;
+`01` → `41`; `04` → `44`. Lotes grandes vêm em blocos `3F <flag 0 primeiro · 1 meio · 2 último> <nº LE32> <dados>`
+e cada lote completo é confirmado com `3E 09 <qtd LE32>` (ou `3E 08` para recusar). **Sem a
+confirmação certa, a pulseira reenvia os mesmos dados.** Os tempos são segundos desde 1990-01-01 UTC.
+
+IDs de campo em hexadecimal:
+
+| Tipo | Conteúdo | Formato do registro |
+|---|---|---|
+| 7 | passos (intervalos de 1 min) | `<tem mais> 05 1 2 3 10(passos) 11(distância m, float) 12 13(kcal, float) 14(corrida) 15(caminhada) 16(duração ms) 17(1 byte)` — 4 bytes cada |
+| 10 | frequência cardíaca | `<tem mais> <tamanho LE32> 01 início 02 fim 20 valor 21 mín 22 máx …` |
+| 16 | sono (episódio) | idem, `53` nota, `75` UUID de 16 bytes |
+| 17 | estágios do sono | 8 campos fixos, `52` estágio (40001 acordado · 40002 leve · 40003 profundo · 40004 REM), `55` UUID do episódio |
+| 19 | estresse | `60` valor, `66`/`67` mín/máx |
+| 112 | SpO2 | `A9` valor, `AB`/`AC` mín/máx |
+
+Campos desconhecidos fazem o registro inteiro ser rejeitado: nada é "adivinhado" dos bytes.
+
+## Clima (serviço 5) 🧪
+
+Pulseira pede com `00` (abriu o clima) ou `01 00 01` (atualizar). Resposta `C1 <nParams 16 bits BE> …`
+no formato de `SAWeatherMessageData.buildMSGData(WEATHER_INFO)`. Atenção às ordens de bytes (confirmadas
+em pulseira real): **medidas de 16 bits em little-endian** e **horários de 32 bits em big-endian**.
+
+| ID | Campo |
+|---|---|
+| 8, 6, 9, 10, 7, 11, 12, 18 | fixos: índices TWC, Celsius, sem aviso de local, local ativo, 1 cidade, cidade atual |
+| 13 / 14 / 15 / 28 | cidade, estado, país, fuso (texto) |
+| 16 / 17 | ícone atual, é dia |
+| 19 | atualizado em (BE32) |
+| 20–25 | temperatura, máx., mín., sensação, máx./mín. de ontem (LE16, °C) |
+| 26 / 27 | nascer / pôr do sol (BE32) |
+| 29, depois 30–35 × N | horas (até 24): índice, é dia, hora, ícone, temperatura, % de chuva |
+| 36, depois 37–43 × N | dias (até 6): índice, data, ícones, máx., mín. |
+| 44–49 | qualidade do ar (zeros) |
+| 50–54 | UV, texto do UV, vento km/h, texto do vento, umidade |
+
+Ícones: código WMO do Open-Meteo convertido para o índice da Samsung (`samsung_icon`). Pacote ≤ 980 bytes.
+
 ## Ainda não implementado
 
-- **Saúde** (passos, frequência cardíaca, sono → Apple Saúde): serviço 10; a pulseira inicia com um
-  pedido de capacidade que precisa de resposta. Referência: `Fit3HealthCodec.kt` no Fit3-App.
 - **Ícones de apps** nas notificações (pedido `APP_ICON_<id>` da pulseira, envio fragmentado).
-- **Clima**, ajustes completos, mostradores (trocar entre os instalados funciona via serviço 6;
-  instalar novos exige RFCOMM, impossível no iOS sem MFi).
+- **Metas de atividade**, ajustes completos, trocar mostrador (serviço 6; instalar novos exige
+  RFCOMM, impossível no iOS sem MFi).

@@ -65,10 +65,16 @@ public enum BandHealth {
     /// REQUEST_DATA com o DeviceInfo de 25 bytes do plugin (cursor zero = troca completa).
     public static func requestData(sequence: Int, now: Date = Date()) -> [UInt8] {
         let end = min(max(Int64(now.timeIntervalSince1970) - epoch1990, 0), Int64(UInt32.max))
-        var out: [UInt8] = [3, seqId] + le16(sequence)
-        out += [5, 25, 1, 0, 2, 0, 0, 3, 4, 51]
-        out += [4] + le32(0) + [5] + le32(0) + [6] + le32(end)
-        out += [7, 1]
+        var out: [UInt8] = [3, seqId]
+        out.append(contentsOf: le16(sequence))
+        out.append(contentsOf: [5, 25, 1, 0, 2, 0, 0, 3, 4, 51] as [UInt8])
+        out.append(4)
+        out.append(contentsOf: le32(0))
+        out.append(5)
+        out.append(contentsOf: le32(0))
+        out.append(6)
+        out.append(contentsOf: le32(end))
+        out.append(contentsOf: [7, 1] as [UInt8])
         return out
     }
 
@@ -99,9 +105,14 @@ public enum BandHealth {
 
     static func gmCapabilityResponse(sequence: Int, proto: Int) -> [UInt8] {
         var out: [UInt8] = [0xE2, 6, 0xD0, 2, 0xD1, 0]
-        out += [0xD2] + le32(Int64(emulatedSHealthVersion))
-        out += [0xD3] + le32(Int64(fit3MinSHealthVersion))
-        out += [seqId] + le16(sequence) + [protoId] + le16(proto)
+        out.append(0xD2)
+        out.append(contentsOf: le32(Int64(emulatedSHealthVersion)))
+        out.append(0xD3)
+        out.append(contentsOf: le32(Int64(fit3MinSHealthVersion)))
+        out.append(seqId)
+        out.append(contentsOf: le16(sequence))
+        out.append(protoId)
+        out.append(contentsOf: le16(proto))
         return out
     }
 
@@ -389,7 +400,10 @@ public final class LargeDataReceiver {
     }
 
     static func ack(_ count: Int, accepted: Bool) -> [UInt8] {
-        [62, accepted ? 0x09 : 0x08] + BandHealth.le32(Int64(count))
+        let status: UInt8 = accepted ? 0x09 : 0x08
+        var out: [UInt8] = [62, status]
+        out.append(contentsOf: BandHealth.le32(Int64(count)))
+        return out
     }
 
     /// nil se não for bloco; senão (payload completo ou nil, confirmação ou nil).

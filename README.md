@@ -17,11 +17,13 @@ Não é afiliado à Samsung.
 | Chamadas: pulseira toca com a tela de chamada; chamada perdida | implementado (sem nome de quem liga: limite do iOS) |
 | Música: ver a faixa e tocar/pausar, próxima e anterior pela pulseira | implementado (só Apple Music; sem capa; volume experimental) |
 | Reconexão automática e restauração em segundo plano | implementado |
-| Passos / frequência cardíaca / sono → Apple Saúde | a fazer (protocolo parcialmente mapeado) |
+| Saúde: passos, distância, calorias, batimentos, oxigênio, estresse e sono no app | implementado (histórico de 30 dias) |
+| Envio ao Apple Saúde | implementado no `Fit3Link-Saude.ipa` — depende de o Sideloadly liberar o HealthKit com o seu Apple ID |
+| Clima na pulseira (Open-Meteo, pela localização ou cidade) | implementado |
 | Notificações do WhatsApp e outros apps | impossível no iOS (sem API; a pulseira não suporta ANCS) |
 | Instalar mostradores novos / firmware | impossível no iOS (exige Bluetooth Classic) |
 
-**Status de validação:** o protocolo em Python passa em 24 testes com vetores reais capturados por
+**Status de validação:** o protocolo em Python passa em 44 testes com vetores reais capturados por
 terceiros e num teste de ponta a ponta contra uma pulseira emulada; as constantes centrais foram
 conferidas no código descompilado dos APKs oficiais. A versão Swift tem a mesma suíte de testes, que
 roda no CI do GitHub (macOS). Falta testar **com uma pulseira real** — use o `tools/fit3ctl.py` pelo
@@ -32,8 +34,10 @@ PC primeiro.
 ```
 tools/                 Python (Windows/PC): protocolo + CLI para testar a pulseira via Bluetooth do PC
   fit3/sap.py            transporte SAP: quadros, CRC-16/ARC, fragmentação, handshake
-  fit3/messages.py       SAMessageData: OOBE, bateria, notificações, chamadas, idiomas
-  fit3ctl.py             scan · gatt · info · notify · call · music · sniff · raw
+  fit3/messages.py       SAMessageData: OOBE, bateria, notificações, chamadas, música, idiomas
+  fit3/health.py         saúde: sessão "Samsung Health", passos, FC, SpO2, sono
+  fit3/weather.py        clima: pacote da pulseira + Open-Meteo
+  fit3ctl.py             scan · gatt · info · notify · call · music · health · weather · sniff · raw
   tests/                 vetores reais
 ios/
   Fit3Kit/               pacote Swift só com o protocolo (testável sem iPhone)

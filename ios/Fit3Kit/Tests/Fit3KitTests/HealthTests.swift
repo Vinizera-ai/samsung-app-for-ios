@@ -14,10 +14,12 @@ final class HealthTests: XCTestCase {
 
     func le4(_ v: Int) -> [UInt8] { (0..<4).map { UInt8(truncatingIfNeeded: v >> ($0 * 8)) } }
     func bandTs(_ d: Date) -> [UInt8] { le4(Int(d.timeIntervalSince1970) - Int(BandHealth.epoch1990)) }
-    func field(_ id: UInt8, _ v: [UInt8]) -> [UInt8] { [id] + v }
+    /// Junta pedaços sem cadeias de `+` (que travam o verificador de tipos do Swift).
+    func bytes(_ parts: [UInt8]...) -> [UInt8] { parts.flatMap { $0 } }
+    func field(_ id: UInt8, _ v: [UInt8]) -> [UInt8] { bytes([id], v) }
     func vitalPacket(_ type: UInt8, _ fields: [UInt8]...) -> [UInt8] {
         let record = fields.flatMap { $0 }
-        return [0x82, 3, 0xE0, 1, 0, type, 0] + le4(record.count) + record + [5, 0]
+        return bytes([0x82, 3, 0xE0, 1, 0, type, 0], le4(record.count), record, [5, 0])
     }
 
     func testGMCapabilityFromRealBand() {
@@ -107,9 +109,10 @@ final class HealthTests: XCTestCase {
 
     func testSleepStages() throws {
         let start = Date(timeIntervalSince1970: 1_790_000_000), end = start.addingTimeInterval(8 * 3600)
-        let pkt: [UInt8] = [0x82, 3, 0xE0, 1, 0, 17, 0] + field(1, bandTs(start)) + field(2, bandTs(end))
-            + field(3, le4(0)) + field(5, bandTs(end)) + field(82, le4(BandHealth.sleepDeep))
-            + field(85, [UInt8](repeating: 1, count: 16)) + field(151, le4(1)) + field(153, le4(1))
+        let pkt = bytes([0x82, 3, 0xE0, 1, 0, 17, 0],
+                        field(1, bandTs(start)), field(2, bandTs(end)), field(3, le4(0)), field(5, bandTs(end)),
+                        field(82, le4(BandHealth.sleepDeep)), field(85, [UInt8](repeating: 1, count: 16)),
+                        field(151, le4(1)), field(153, le4(1)))
         let stage = try XCTUnwrap(BandHealth.parseSleepStages(pkt)?.first)
         XCTAssertEqual(stage, BandHealth.SleepStage(sleepId: String(repeating: "01", count: 16),
                                                     start: start, end: end, kind: BandHealth.sleepDeep))

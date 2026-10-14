@@ -85,12 +85,15 @@ public enum BandWeather {
             count += 1
         }
         func dword(_ id: UInt8, _ v: Int64) {
-            out += [id] + [24, 16, 8, 0].map { UInt8(truncatingIfNeeded: v >> $0) }
+            out.append(id)
+            for shift: Int64 in [24, 16, 8, 0] { out.append(UInt8(truncatingIfNeeded: v >> shift)) }
             count += 1
         }
         func text(_ id: UInt8, _ s: String) {
             let raw = SAMessage.utf8Prefix(s, maxBytes: 80)
-            out += [id, UInt8(raw.count)] + raw
+            out.append(id)
+            out.append(UInt8(raw.count))
+            out.append(contentsOf: raw)
             count += 1
         }
 

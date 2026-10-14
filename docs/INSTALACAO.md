@@ -11,6 +11,18 @@ O app não está na App Store. O caminho sem Mac é: **GitHub compila o `.ipa`**
    Swift), compila o app e publica o `Fit3Link.ipa` no release **latest**
    (`https://github.com/<você>/<repo>/releases/tag/latest`).
 
+### Qual `.ipa` baixar?
+
+| Arquivo | Para quê |
+|---|---|
+| `Fit3Link-Saude.ipa` | **Tente este primeiro.** Igual ao outro, mais o envio de passos, batimentos, sono e oxigênio ao **Apple Saúde**. |
+| `Fit3Link.ipa` | Use se o Sideloadly der erro com o de cima (por exemplo, recusar o HealthKit com Apple ID grátis). Os dados de saúde continuam aparecendo dentro do app; só não vão para o Apple Saúde. |
+
+Não se sabe ao certo se o Apple ID grátis libera o HealthKit em apps instalados pelo Sideloadly; as
+fontes divergem. Por isso existem os dois. Se o `Fit3Link-Saude.ipa` instalar, ative **Enviar ao
+Apple Saúde** no app: o iPhone vai pedir a permissão. Se aparecer um erro de *entitlement*, é a
+assinatura grátis recusando o HealthKit, e o resto do app funciona normalmente.
+
 ## 2a. Instalar pelo Windows com Sideloadly (recomendado para você)
 
 1. Instale o [Sideloadly](https://sideloadly.io) e o **iTunes + iCloud baixados do site da Apple**

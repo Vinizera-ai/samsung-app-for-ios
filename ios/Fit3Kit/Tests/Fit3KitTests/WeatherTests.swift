@@ -16,7 +16,8 @@ final class WeatherTests: XCTestCase {
     func testMatchesSamsungShape() throws {
         let pkt = BandWeather.response(sample())
         XCTAssertEqual(pkt[0], 0xC1)
-        XCTAssertEqual(Int(pkt[1]) << 8 | Int(pkt[2]), 6 + 17 + 1 + 6 + 1 + 7 + 11)
+        let paramCount = Int(pkt[1]) << 8 | Int(pkt[2])
+        XCTAssertEqual(paramCount, 49)   // 23 fixos + 1 + 6 (1 hora) + 1 + 7 (1 dia) + 11 finais
         XCTAssertEqual(pkt[3], 8)
         let t = try XCTUnwrap(pkt.firstIndex(of: 19))
         XCTAssertEqual(Array(pkt[(t + 1)...(t + 4)]), [0x65, 0x53, 0xF1, 0x00])   // horário big-endian
