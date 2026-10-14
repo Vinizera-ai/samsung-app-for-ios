@@ -1,0 +1,81 @@
+# Compila o Fit3Link.ipa (sem assinatura) nos runners macOS do GitHub — não precisa de Mac.
+# O IPA é assinado na hora de instalar pelo Sideloadly (Windows) ou SideStore (iPhone).
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  protocol-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Testes do protocolo (Python)
+        run: cd tools && python -m unittest discover -s tests -t . -v
+
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versão do Xcode
+        run: xcodebuild -version
+
+      - name: Testes do protocolo (Swift)
+        run: cd ios/Fit3Kit && swift test
+
+      - name: Gerar projeto Xcode
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Compilar (sem assinatura)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios/Fit3Link.xcodeproj \
+            -scheme Fit3Link \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E 'error:|warning: |BUILD' || true
+          test -d build/Build/Products/Release-iphoneos/Fit3Link.app
+
+      - name: Empacotar IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/Fit3Link.app Payload/
+          zip -qry Fit3Link.ipa Payload
+          ls -la Fit3Link.ipa
+
+      - name: Enviar artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fit3Link-ipa
+          path: Fit3Link.ipa
+
+      - name: Publicar release "latest"
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest Fit3Link.ipa \
+            --title "Build mais recente" \
+            --notes "Compilado de ${GITHUB_SHA::7} em $(date -u '+%Y-%m-%d %H:%M UTC'). Instale com Sideloadly ou SideStore." \
+            --prerelease
+
+      - name: Log de build em caso de falha
+        if: failure()
+        run: tail -200 build.log || true

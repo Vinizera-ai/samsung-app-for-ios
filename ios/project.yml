@@ -1,0 +1,47 @@
+# XcodeGen: `xcodegen generate` cria Fit3Link.xcodeproj (gerado no CI; não versionar).
+name: Fit3Link
+options:
+  bundleIdPrefix: dev.fit3link
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+packages:
+  Fit3Kit:
+    path: Fit3Kit
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  Fit3Link:
+    type: application
+    platform: iOS
+    scheme: {}
+    sources:
+      - path: App
+    dependencies:
+      - package: Fit3Kit
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Fit3 Link
+        CFBundleDevelopmentRegion: pt-BR
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSBluetoothAlwaysUsageDescription: O Fit3 Link usa o Bluetooth para conectar à sua Galaxy Fit3 e enviar notificações e chamadas.
+        # bluetooth-central: reconexão e restauração em segundo plano.
+        # audio: só para o modo opcional "Manter ativo em segundo plano" (alertas de chamada).
+        UIBackgroundModes: [bluetooth-central, audio]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.fit3link.app
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        # Com um Mac: defina seu Personal Team aqui (Apple ID grátis serve).
+        DEVELOPMENT_TEAM: ""

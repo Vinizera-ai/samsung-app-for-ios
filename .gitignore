@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+tools/.venv/
+
+# Xcode (o projeto é gerado pelo XcodeGen)
+ios/*.xcodeproj/
+ios/App/Info.plist
+build/
+DerivedData/
+.build/
+.swiftpm/
+*.ipa
+Payload/
+
+# Engenharia reversa: nunca versionar APKs ou código descompilado da Samsung
+*.apk
+*.xapk
+re/
+
+# Capturas podem conter dados pessoais
+*.log
+captura*.txt
+btsnoop_hci*
+
+.DS_Store
