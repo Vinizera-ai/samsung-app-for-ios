@@ -235,7 +235,7 @@ public extension Array where Element == UInt8 {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
 
     init?(hex: String) {
-        let chars = Array(hex.replacingOccurrences(of: " ", with: ""))
+        let chars = [Character](hex.replacingOccurrences(of: " ", with: ""))
         guard chars.count % 2 == 0 else { return nil }
         var out: [UInt8] = []
         out.reserveCapacity(chars.count / 2)
