@@ -35,6 +35,7 @@ O que procurar e onde estava:
 | Formato `SAMessageData` (cabeçalho, params LE, strings) | `…hostmanager.message.SAMessageData` (plugin) |
 | Pacotes de chamada | `…providers.sacall.message.CallPacketConstructor` (plugin) |
 | IDs de idioma (pt_BR = 82) | `…hostmanager.utils.LocaleUtils` (plugin) |
+| Mensagens de música (agente 9) | `…providers.samusic.message.SMediaMessageContracts` (plugin) |
 | RFCOMM para arquivos `db764ac8-…` | `p119l7/d.java` (plugin, ofuscado) |
 
 Comandos úteis:
@@ -59,6 +60,7 @@ python -m venv .venv
 .venv\Scripts\python fit3ctl.py info  <ENDEREÇO>             # handshake + firmware + bateria
 .venv\Scripts\python fit3ctl.py notify <ENDEREÇO> --title "Oi" --body "Teste"
 .venv\Scripts\python fit3ctl.py call  <ENDEREÇO> --name "Maria" --number "11999990000"
+.venv\Scripts\python fit3ctl.py music <ENDEREÇO>                  # simula um player (tela de música)
 .venv\Scripts\python fit3ctl.py sniff <ENDEREÇO> --seconds 120 --log captura.txt
 .venv\Scripts\python fit3ctl.py raw   <ENDEREÇO> 11 02       # envia SAMessage crua ao serviço 11
 ```

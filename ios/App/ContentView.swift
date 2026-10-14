@@ -9,6 +9,8 @@ struct ContentView: View {
     @AppStorage("calls.enabled") private var callsEnabled = true
     @AppStorage("calls.missed") private var missedEnabled = true
     @State private var keepAlive = KeepAlive.shared.enabled
+    @AppStorage("music.enabled") private var musicEnabled = true
+    @State private var musicAuthorized = MusicBridge.shared.authorized
 
     var body: some View {
         NavigationStack {
@@ -52,6 +54,25 @@ struct ContentView: View {
                     Text("Chamadas")
                 } footer: {
                     Text("O iOS não informa a apps quem está ligando, então a pulseira mostra \"Chamada no iPhone\". Para funcionar com o app fechado, ative \"Manter ativo em segundo plano\" (gasta um pouco mais de bateria) e não feche o app pelo seletor de apps.")
+                }
+
+                Section {
+                    if musicAuthorized {
+                        Toggle("Controlar o Apple Music pela pulseira", isOn: Binding(
+                            get: { musicEnabled },
+                            set: { musicEnabled = $0; band.syncMusic() }))
+                    } else {
+                        Button("Permitir acesso ao Apple Music") {
+                            MusicBridge.shared.requestAccess { granted in
+                                musicAuthorized = granted
+                                band.syncMusic()
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Música")
+                } footer: {
+                    Text("Abra a tela de música na pulseira para ver a faixa e usar tocar/pausar, próxima e anterior. Funciona só com o Apple Music (o iOS não deixa controlar Spotify e outros). A capa do álbum não aparece, e o volume pela pulseira é experimental.")
                 }
 
                 Section("Mensagens e e-mails") {

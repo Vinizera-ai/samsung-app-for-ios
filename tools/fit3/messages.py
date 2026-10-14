@@ -210,6 +210,118 @@ class Call:
                 + p_long(6, millis if millis is not None else now_millis()))
 
 
+# --- Serviço 9: música (com.samsung.wearable.providers.samusic.message.SMediaMessageContracts) ---
+
+class Media:
+    # pulseira -> celular
+    REQ_MEDIA_CHANGED, REQ_METADATA, REQ_PLAYBACK_STATE, REQ_REMOTE_CONTROL = 1, 2, 3, 4
+    REQ_CAPABILITY, REQ_VOLUME_INFO, REQ_VOLUME_CONTROL, REQ_APP_INFO, REQ_QUEUE = 5, 6, 7, 8, 9
+    REQ_SKIP_TO_ITEM = 16
+    # celular -> pulseira
+    RSP_METADATA, RSP_PLAYBACK_STATE, RSP_CAPABILITY, RSP_VOLUME_INFO = 17, 18, 20, 21
+    RSP_APP_INFO, RSP_MEDIA_CHANGED, RSP_APP_COUNT, RSP_QUEUE = 22, 23, 24, 25
+
+    STOPPED, PAUSED, PLAYING = 1, 2, 3
+    REMOTE_ACTIONS = {1: "stop", 2: "play_pause", 3: "previous", 4: "next"}
+    VOLUME_ACTIONS = {1: "set", 2: "up", 3: "down", 4: "mute_on", 5: "mute_off"}
+    KEY_RELEASED, KEY_PRESSED = 1, 2
+
+    @staticmethod
+    def request_id(message: bytes) -> int | None:
+        h = parse_header(message)
+        return h.id if h and h.typ == TYPE_REQUEST else None
+
+    @staticmethod
+    def parse_remote(message: bytes) -> tuple[str, bool] | None:
+        """(ação, pressionado). Um toque gera 'solto' e 'pressionado': só aja no pressionado."""
+        if Media.request_id(message) != Media.REQ_REMOTE_CONTROL:
+            return None
+        action, key = None, Media.KEY_PRESSED
+        for i in range(1, len(message) - 1, 2):
+            if message[i] == 1:
+                action = Media.REMOTE_ACTIONS.get(message[i + 1])
+            elif message[i] == 2:
+                key = message[i + 1]
+        return (action, key == Media.KEY_PRESSED) if action else None
+
+    @staticmethod
+    def parse_volume(message: bytes) -> tuple[str, int | None] | None:
+        if (Media.request_id(message) != Media.REQ_VOLUME_CONTROL or len(message) < 3
+                or message[1] != 1 or message[2] not in Media.VOLUME_ACTIONS):
+            return None
+        value = None
+        i = 3
+        while i + 1 < len(message):
+            if message[i] == 2:  # valor opcional: int32 LE, ou 1 byte em pacotes curtos
+                value = (int.from_bytes(message[i + 1:i + 5], "little") if i + 5 <= len(message)
+                         else message[i + 1])
+                break
+            i += 2
+        return Media.VOLUME_ACTIONS[message[2]], value
+
+    @staticmethod
+    def screen_state(message: bytes) -> int | None:
+        """Tela de música da pulseira: 0 fechada, 1 visível, 2 always-on."""
+        if Media.request_id(message) != Media.REQ_MEDIA_CHANGED or len(message) < 3 or message[1] != 1:
+            return None
+        return message[2] if message[2] <= 2 else None
+
+    @staticmethod
+    def requested_app_id(message: bytes) -> str | None:
+        h = parse_header(message)
+        if not h or h.typ != TYPE_REQUEST:
+            return None
+        off = 2 if h.fmt == FORMAT_VARIABLE else 1
+        if len(message) < off + 2 or message[off] != 1 or off + 2 + message[off + 1] > len(message):
+            return None
+        return message[off + 2:off + 2 + message[off + 1]].decode("utf-8", "replace")
+
+    # As respostas "fixas" do agente 9 levam o número de parâmetros (igual ao Builder da Samsung).
+    @staticmethod
+    def _fixed(msg_id: int, *params: bytes) -> bytes:
+        return bytes([header(FORMAT_FIXED, TYPE_RESPONSE, msg_id), len(params)]) + b"".join(params)
+
+    @staticmethod
+    def _variable(msg_id: int, *params: bytes) -> bytes:
+        return bytes([header(FORMAT_VARIABLE, TYPE_RESPONSE, msg_id), len(params)]) + b"".join(params)
+
+    @staticmethod
+    def capability(max_volume: int, warning_volume: int) -> bytes:
+        return Media._fixed(Media.RSP_CAPABILITY, p_int(1, max_volume), p_int(2, warning_volume))
+
+    @staticmethod
+    def volume_info(volume: int, headset: bool = True) -> bytes:
+        return Media._fixed(Media.RSP_VOLUME_INFO, p_int(1, volume), p_byte(2, 2 if headset else 1))
+
+    @staticmethod
+    def media_changed(screen_state: int) -> bytes:
+        return Media._fixed(Media.RSP_MEDIA_CHANGED, p_byte(1, screen_state))
+
+    @staticmethod
+    def app_count(app_id: str) -> bytes:
+        """Anuncia se há um player ativo (antes dos metadados, senão a pulseira ignora a faixa)."""
+        return Media._variable(Media.RSP_APP_COUNT, p_byte(1, 1 if app_id else 0), p_str(2, app_id))
+
+    @staticmethod
+    def metadata(title: str, artist: str, duration_ms: int, app_id: str, artwork: str = "") -> bytes:
+        return Media._variable(Media.RSP_METADATA, p_long(1, duration_ms), p_str(2, title, 100),
+                               p_str(3, artist, 100), p_str(4, artwork), p_str(5, app_id))
+
+    @staticmethod
+    def playback_state(state: int, position_ms: int, app_id: str, active_item: int = -1) -> bytes:
+        return Media._variable(Media.RSP_PLAYBACK_STATE, p_byte(1, state), p_long(2, position_ms),
+                               p_long(4, active_item), p_str(3, app_id))
+
+    @staticmethod
+    def app_info(app_id: str, title: str, icon: str = "") -> bytes:
+        return Media._variable(Media.RSP_APP_INFO, p_str(1, app_id), p_str(2, title, 100), p_str(3, icon))
+
+    @staticmethod
+    def empty_queue(app_id: str, title: str) -> bytes:
+        return Media._variable(Media.RSP_QUEUE, p_str(1, app_id), p_str(2, title, 100),
+                               p_int(3, 0), p_str(4, ""))
+
+
 # --- IDs de idioma da pulseira (com.samsung.wearable.hostmanager.utils.LocaleUtils) ---
 
 BAND_LOCALES = {

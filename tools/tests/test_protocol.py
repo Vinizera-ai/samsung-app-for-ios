@@ -3,7 +3,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from fit3 import sap
-from fit3.messages import Call, Notification, Oobe, Settings, band_locale_id, find_firmware
+from fit3.messages import Call, Media, Notification, Oobe, Settings, band_locale_id, find_firmware
 
 
 class CrcTest(unittest.TestCase):
@@ -118,6 +118,53 @@ class MessageTest(unittest.TestCase):
 
     def test_firmware_string(self):
         self.assertEqual(find_firmware(b"\x41\x01..R390XXU0AZA3\x00"), "R390XXU0AZA3")
+
+
+class MediaTest(unittest.TestCase):
+    """Fixtures do SAMessageData.Builder original (respostas fixas com contagem de parâmetros)."""
+
+    def test_capability_and_volume_match_stock_builder(self):
+        self.assertEqual(Media.capability(160, 106), bytes([0x54, 2, 1, 0xA0, 0, 0, 0, 2, 0x6A, 0, 0, 0]))
+        self.assertEqual(Media.volume_info(80, headset=True), bytes([0x55, 2, 1, 80, 0, 0, 0, 2, 2]))
+        self.assertEqual(Media.volume_info(0, headset=False), bytes([0x55, 2, 1, 0, 0, 0, 0, 2, 1]))
+
+    def test_media_changed_echoes_screen_state(self):
+        self.assertEqual(Media.screen_state(bytes([1, 1, 2])), 2)
+        for state in range(3):
+            self.assertEqual(Media.media_changed(state), bytes([0x57, 1, 1, state]))
+
+    def test_app_count(self):
+        present = Media.app_count("com.spotify.music")
+        self.assertEqual(present[:6], bytes([0xD8, 2, 1, 1, 2, 17]))
+        self.assertEqual(Media.app_count(""), bytes([0xD8, 2, 1, 0, 2, 0]))
+
+    def test_remote_control_press_and_release(self):
+        self.assertEqual(Media.parse_remote(bytes([0x04, 1, 4, 2, 2])), ("next", True))
+        self.assertEqual(Media.parse_remote(bytes([0x04, 1, 2, 2, 1])), ("play_pause", False))
+        self.assertEqual(Media.parse_remote(bytes([0x04, 1, 3])), ("previous", True))
+        self.assertIsNone(Media.parse_remote(bytes([0x44, 1, 4])))   # resposta, não pedido
+
+    def test_volume_control(self):
+        self.assertEqual(Media.parse_volume(bytes([7, 1, 1, 2, 7])), ("set", 7))
+        self.assertEqual(Media.parse_volume(bytes([7, 1, 2])), ("up", None))
+        self.assertEqual(Media.parse_volume(bytes([7, 1, 2, 2, 1, 0, 0, 0])), ("up", 1))
+        self.assertEqual(Media.parse_volume(bytes([7, 1, 1, 2, 80, 0, 0, 0])), ("set", 80))
+        self.assertEqual(Media.parse_volume(bytes([7, 1, 3])), ("down", None))
+
+    def test_requested_app_id(self):
+        app = b"org.example.player"
+        self.assertEqual(Media.requested_app_id(bytes([9, 1, len(app)]) + app), "org.example.player")
+        self.assertEqual(Media.requested_app_id(bytes([0x89, 1, 1, len(app)]) + app), "org.example.player")
+        self.assertIsNone(Media.requested_app_id(bytes([0x89, 1, 1, 50])))
+
+    def test_metadata_and_playback_state(self):
+        meta = Media.metadata("Música", "Artista", 90_000, "com.apple.Music")
+        self.assertEqual(meta[:2], bytes([0xD1, 5]))
+        self.assertIn(bytes([1]) + (90_000).to_bytes(8, "little"), meta)
+        self.assertTrue(meta.endswith(bytes([5, 15]) + b"com.apple.Music"))
+        stopped = Media.playback_state(Media.STOPPED, 0, "")
+        self.assertEqual(stopped[:4], bytes([0xD2, 4, 1, 1]))
+        self.assertIn(bytes([4]) + b"\xff" * 8, stopped)   # sem item ativo = -1
 
 
 if __name__ == "__main__":

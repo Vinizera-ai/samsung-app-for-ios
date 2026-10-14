@@ -8,6 +8,7 @@ Exemplos:
   python fit3ctl.py info AA:BB:CC:DD:EE:FF
   python fit3ctl.py notify AA:BB:CC:DD:EE:FF --title "Olá" --body "Teste do PC"
   python fit3ctl.py call AA:BB:CC:DD:EE:FF --name "Maria" --number "+55 11 99999-0000"
+  python fit3ctl.py music AA:BB:CC:DD:EE:FF --title "Minha música" --artist "Artista"
   python fit3ctl.py sniff AA:BB:CC:DD:EE:FF --seconds 120 --log captura.txt
 """
 from __future__ import annotations
@@ -26,8 +27,8 @@ except ImportError:  # pragma: no cover
     sys.exit("Instale as dependências: pip install -r requirements.txt")
 
 from fit3 import sap
-from fit3.messages import (Call, Notification, Oobe, Settings, band_locale_id, find_firmware,
-                           parse_header)
+from fit3.messages import (Call, Media, Notification, Oobe, Settings, band_locale_id,
+                           find_firmware, parse_header)
 
 Agent = sap.Agent
 BAND_NAME = re.compile(r"fit3|galaxy fit|r390", re.IGNORECASE)
@@ -45,6 +46,7 @@ class Fit3Session:
         self._reassembler = sap.Reassembler()
         self._waiters: list[tuple[Callable[[int, bytes], bool], asyncio.Future]] = []
         self._log = open(log_path, "a", encoding="utf-8") if log_path else None
+        self._send_lock = asyncio.Lock()  # quadros de mensagens diferentes não podem se misturar
         self.on_message: Callable[[int, bytes], None] | None = None
 
     # --- log ---
@@ -129,9 +131,10 @@ class Fit3Session:
         if self.mtu is None:
             raise RuntimeError("sessão SAP não iniciada")
         max_frame = max(23, self.client.mtu_size - 3)
-        self._trace("..", f"enviando {self.describe(service, message)}")
-        for frame in sap.encode_message(service, message, self.mtu, max_frame=max_frame):
-            await self._write_raw(frame)
+        async with self._send_lock:
+            self._trace("..", f"enviando {self.describe(service, message)}")
+            for frame in sap.encode_message(service, message, self.mtu, max_frame=max_frame):
+                await self._write_raw(frame)
 
     async def request(self, service: int, message: bytes, expect: Callable[[int, bytes], bool],
                       timeout: float = 5) -> bytes | None:
@@ -264,6 +267,73 @@ async def cmd_call(args) -> None:
     await with_session(args, run)
 
 
+async def cmd_music(args) -> None:
+    """Simula um player no PC: a tela de música da pulseira mostra as faixas e os botões aparecem aqui."""
+    app_id = "dev.fit3link.pc"
+    tracks = [(args.title, args.artist), ("Segunda faixa", args.artist), ("Terceira faixa", args.artist)]
+    player = {"state": Media.PLAYING, "track": 0, "volume": 8, "muted_from": 8}
+
+    async def run(s: Fit3Session):
+        def metadata() -> bytes:
+            title, artist = tracks[player["track"] % len(tracks)]
+            return Media.metadata(title, artist, 180_000, app_id)
+
+        def state() -> bytes:
+            return Media.playback_state(player["state"], 0, app_id)
+
+        async def handle(m: bytes) -> None:
+            remote, volume, rid = Media.parse_remote(m), Media.parse_volume(m), Media.request_id(m)
+            if remote:
+                action, pressed = remote
+                if not pressed:
+                    return
+                print(f">>> Botão da pulseira: {action}")
+                if action == "play_pause":
+                    player["state"] = Media.PAUSED if player["state"] == Media.PLAYING else Media.PLAYING
+                elif action == "stop":
+                    player["state"] = Media.PAUSED
+                else:
+                    player["track"] += 1 if action == "next" else -1
+                    await s.send(Agent.MEDIA, metadata())
+                await s.send(Agent.MEDIA, state())
+            elif volume:
+                action, value = volume
+                v = player["volume"]
+                v = {"up": v + 1, "down": v - 1, "set": value if value is not None else v,
+                     "mute_on": 0, "mute_off": player["muted_from"]}[action]
+                if action == "mute_on":
+                    player["muted_from"] = player["volume"]
+                player["volume"] = max(0, min(15, v))
+                print(f">>> Volume da pulseira: {action} -> {player['volume']}")
+                await s.send(Agent.MEDIA, Media.volume_info(player["volume"]))
+            elif rid == Media.REQ_MEDIA_CHANGED:
+                screen = Media.screen_state(m)
+                await s.send(Agent.MEDIA, Media.media_changed(1 if screen is None else screen))
+                await s.send(Agent.MEDIA, metadata())
+                await s.send(Agent.MEDIA, state())
+            elif rid == Media.REQ_METADATA:
+                await s.send(Agent.MEDIA, metadata())
+            elif rid == Media.REQ_PLAYBACK_STATE:
+                await s.send(Agent.MEDIA, state())
+            elif rid == Media.REQ_CAPABILITY:
+                await s.send(Agent.MEDIA, Media.capability(15, 10))
+            elif rid == Media.REQ_VOLUME_INFO:
+                await s.send(Agent.MEDIA, Media.volume_info(player["volume"]))
+            elif rid == Media.REQ_APP_INFO and Media.requested_app_id(m) == app_id:
+                await s.send(Agent.MEDIA, Media.app_info(app_id, "Fit3 Link (PC)"))
+            elif rid == Media.REQ_QUEUE and Media.requested_app_id(m) == app_id:
+                await s.send(Agent.MEDIA, Media.empty_queue(app_id, "Fit3 Link (PC)"))
+
+        loop = asyncio.get_running_loop()
+        s.on_message = lambda sv, m: sv == Agent.MEDIA and loop.create_task(handle(m))
+        await s.send(Agent.MEDIA, Media.app_count(app_id))
+        await s.send(Agent.MEDIA, metadata())
+        await s.send(Agent.MEDIA, state())
+        print(f"Abra a tela de música na pulseira e use os botões ({args.seconds:.0f}s)…")
+        await asyncio.sleep(args.seconds)
+    await with_session(args, run)
+
+
 async def cmd_sniff(args) -> None:
     async def run(s: Fit3Session):
         print(f"Registrando tudo que a pulseira enviar por {args.seconds}s (mexa na pulseira)…")
@@ -320,6 +390,10 @@ def main() -> None:
     c.add_argument("--name", default="Chamada de teste")
     c.add_argument("--number", default="+55 11 90000-0000")
     c.add_argument("--seconds", type=float, default=10)
+    mu = connected("music", "simula um player para testar a tela de música", cmd_music)
+    mu.add_argument("--title", default="Música de teste")
+    mu.add_argument("--artist", default="Fit3 Link")
+    mu.add_argument("--seconds", type=float, default=120)
     sn = connected("sniff", "registra mensagens da pulseira", cmd_sniff)
     sn.add_argument("--seconds", type=float, default=60)
     r = connected("raw", "envia uma mensagem SAP crua", cmd_raw)

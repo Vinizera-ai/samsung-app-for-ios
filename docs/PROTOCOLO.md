@@ -153,6 +153,39 @@ Se nome == número, o nome vai vazio (igual ao plugin). Pedidos da pulseira → 
 14 recusar com mensagem, 15 limpar perdidas. **O iOS não permite** que apps silenciem ou recusem
 chamadas; o app apenas para a vibração da pulseira.
 
+## Música (serviço 9) ✅ IDs / 🧪 fluxo
+
+IDs em `com.samsung.wearable.providers.samusic.message.SMediaMessageContracts`; fluxo e pacotes de
+referência (gerados pelo `Builder` original) vindos do Fit3-App.
+
+Pulseira → celular (pedidos):
+
+| ID | Pedido | Formato |
+|---|---|---|
+| 1 | tela de música mudou | `01 01 <0 fechada · 1 visível · 2 always-on>` |
+| 2 / 3 | metadados / estado | `02`, `03` |
+| 4 | botão | `04 01 <1 parar · 2 tocar/pausar · 3 anterior · 4 próxima> [02 <1 solto · 2 pressionado>]` |
+| 5 / 6 | capacidade / volume | `05`, `06` |
+| 7 | mudar volume | `07 01 <1 definir · 2 + · 3 − · 4 mudo · 5 tirar mudo> [02 <valor>]` |
+| 8 / 9 | info do app / fila | `08 01 <len> <appId>` |
+
+Um toque no botão gera **dois** pacotes (solto e pressionado): aja só no pressionado.
+
+Celular → pulseira (respostas). As "fixas" do agente 9 levam o número de parâmetros no byte 1:
+
+| ID | Resposta | Bytes |
+|---|---|---|
+| 17 | metadados | `d1 05  01 <duração ms LE64>  02 <len> <título>  03 <len> <artista>  04 <len> <capa>  05 <len> <appId>` |
+| 18 | estado | `d2 04  01 <1 parado · 2 pausado · 3 tocando>  02 <posição ms LE64>  04 <item ativo LE64, -1>  03 <len> <appId>` |
+| 20 | capacidade | `54 02  01 <vol. máx LE32>  02 <vol. de aviso LE32>` |
+| 21 | volume | `55 02  01 <volume LE32>  02 <1 alto-falante · 2 fone>` |
+| 22 | info do app | `d6 03  01 <appId>  02 <nome>  03 <ícone>` |
+| 23 | eco da tela | `57 01  01 <estado recebido>` |
+| 24 | player ativo | `d8 02  01 <0/1>  02 <len> <appId>` — enviar **antes** dos metadados |
+| 25 | fila | `d9 04  01 <appId>  02 <título>  03 <qtd LE32>  04 <arquivo>` (vazia no iOS) |
+
+A capa do álbum e a fila são transferidas como arquivos por Bluetooth Classic → indisponíveis no iOS.
+
 ## Ainda não implementado
 
 - **Saúde** (passos, frequência cardíaca, sono → Apple Saúde): serviço 10; a pulseira inicia com um

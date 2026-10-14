@@ -69,6 +69,10 @@ final class BandManager: NSObject, ObservableObject {
     private var generation = 0
     /// Mensagens enviadas enquanto a pulseira estava desconectada.
     private var pending: [(Agent, [UInt8])] = []
+    /// O que a pulseira já sabe sobre a música (evita reenviar sem mudança).
+    private var announcedMusicApp: String?
+    private var lastMusicIdentity: String?
+    private var lastPlayback: BandMedia.Playback?
 
     private var savedId: UUID? {
         get { defaults.string(forKey: "band.id").flatMap(UUID.init(uuidString:)) }
@@ -85,6 +89,7 @@ final class BandManager: NSObject, ObservableObject {
     override init() {
         super.init()
         bandName = defaults.string(forKey: "band.name")
+        MusicBridge.shared.onChange = { [weak self] in self?.syncMusic() }
         _ = central
     }
 
@@ -269,6 +274,9 @@ final class BandManager: NSObject, ObservableObject {
         writeBusy = false
         writeChar = nil
         reassembler.reset()
+        announcedMusicApp = nil
+        lastMusicIdentity = nil
+        lastPlayback = nil
     }
 
     private func after(_ seconds: Double, _ body: @escaping () -> Void) {
@@ -362,6 +370,7 @@ final class BandManager: NSObject, ObservableObject {
         send(.notification, BandNotification.iconCapabilityRequest)
         send(.call, BandCall.enableNotification())
         send(.fullSettings, BandSettings.batteryRequest)
+        syncMusic()
         let queued = pending
         pending = []
         for (agent, message) in queued { send(agent, message) }
@@ -385,9 +394,101 @@ final class BandManager: NSObject, ObservableObject {
             }
         case .call?:
             if let action = BandCall.parseBandAction(m) { handleCallAction(action) }
+        case .media?:
+            handleMedia(m)
         default:
             break
         }
+    }
+
+    // MARK: - Música (serviço 9)
+
+    /// Mantém a pulseira em dia com o Apple Music sem precisar reabrir a tela de música.
+    func syncMusic() {
+        guard isReady else { return }
+        let music = MusicBridge.shared
+        let appId = music.activeAppId
+        if appId != announcedMusicApp {
+            announcedMusicApp = appId
+            send(.media, BandMedia.appCount(appId: appId), queueIfOffline: false)
+        }
+        let s = music.snapshot
+        if s.identity != lastMusicIdentity {
+            sendMusicMetadata(s)
+            sendPlaybackState(s)
+        } else if s.playback != lastPlayback {
+            sendPlaybackState(s)
+        }
+    }
+
+    private func handleMedia(_ m: [UInt8]) {
+        let music = MusicBridge.shared
+        if let remote = BandMedia.parseRemote(m) {
+            // Um toque gera "solto" e "pressionado"; agir nos dois pularia duas faixas.
+            guard remote.pressed else { return }
+            log.add("Música: botão \(remote.action)")
+            if !music.handle(remote.action) {
+                log.add("Música: Apple Music indisponível (permissão negada ou desativado)")
+            }
+            // O Apple Music leva um instante para mudar de faixa/estado.
+            let skipped = remote.action == .next || remote.action == .previous
+            for delay in [0.3, 1.0] {
+                after(delay) { [weak self] in
+                    guard let self else { return }
+                    let s = music.snapshot
+                    if skipped { self.sendMusicMetadata(s) }
+                    self.sendPlaybackState(s)
+                }
+            }
+            return
+        }
+        if let volume = BandMedia.parseVolume(m) {
+            music.handle(volume)
+            after(0.3) { [weak self] in self?.sendVolumeInfo() }
+            return
+        }
+        switch BandMedia.request(m) {
+        case .mediaChanged?:
+            send(.media, BandMedia.mediaChanged(screenState: BandMedia.screenState(m) ?? 1), queueIfOffline: false)
+            syncMusic()
+        case .metadata?:
+            sendMusicMetadata(music.snapshot)
+        case .playbackState?:
+            sendPlaybackState(music.snapshot)
+        case .capability?:
+            send(.media, BandMedia.capability(maxVolume: MusicBridge.maxVolume,
+                                              warningVolume: MusicBridge.maxVolume * 2 / 3), queueIfOffline: false)
+        case .volumeInfo?:
+            sendVolumeInfo()
+        case .appInfo?:
+            if let id = BandMedia.requestedAppId(m), !id.isEmpty, id == music.activeAppId {
+                send(.media, BandMedia.appInfo(appId: id, title: MusicBridge.appTitle), queueIfOffline: false)
+            }
+        case .queue?:
+            // O iOS não expõe a fila do Apple Music para outros apps: responde com fila vazia.
+            if let id = BandMedia.requestedAppId(m), !id.isEmpty, id == music.activeAppId {
+                send(.media, BandMedia.emptyQueue(appId: id, title: MusicBridge.appTitle), queueIfOffline: false)
+            }
+        default:
+            break
+        }
+    }
+
+    private func sendMusicMetadata(_ s: MusicBridge.Snapshot) {
+        lastMusicIdentity = s.identity
+        send(.media, BandMedia.metadata(title: s.title, artist: s.artist, durationMs: s.durationMs,
+                                        appId: MusicBridge.shared.activeAppId), queueIfOffline: false)
+    }
+
+    private func sendPlaybackState(_ s: MusicBridge.Snapshot) {
+        lastPlayback = s.playback
+        send(.media, BandMedia.playbackState(s.playback, positionMs: s.positionMs,
+                                             appId: MusicBridge.shared.activeAppId), queueIfOffline: false)
+    }
+
+    private func sendVolumeInfo() {
+        let music = MusicBridge.shared
+        send(.media, BandMedia.volumeInfo(music.volume, headset: music.headsetConnected), queueIfOffline: false)
     }
 
     private func handleCallAction(_ action: BandCall.BandAction) {
